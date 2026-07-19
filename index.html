@@ -128,7 +128,8 @@
     border:2px solid var(--line);border-radius:7px;padding:7px 8px;font-family:inherit;
     font-size:15px;color:var(--ink);background:#fff;min-width:0;
   }
-  .timerow input[type=time]{flex:0 0 108px}
+  .timerow input[type=time]{flex:0 0 106px}
+  .clr{flex:0 0 auto;width:34px;height:34px;border:2px solid var(--line);background:#fff;border-radius:7px;color:#7A8DA6;font-size:16px;line-height:1}
   .timerow input.stage{flex:1}
   .clash{
     display:block;margin:0 10px 8px 12px;background:var(--hot);color:#fff;border-radius:6px;
@@ -395,6 +396,7 @@ function renderList(){
       <div class="timerow">
         <input type="time" data-act="time" value="${state.time[x.n]||""}" aria-label="Set time">
         <input class="stage" type="text" data-act="stage" value="${(state.stage[x.n]||"").replace(/"/g,"&quot;")}" placeholder="Stage" aria-label="Stage">
+        <button class="clr" data-act="cleartime" aria-label="Clear time and stage">×</button>
       </div>
       ${clash[x.n] ? `<div class="clash">Overlaps ${[...new Set(clash[x.n])].join(", ")}</div>` : ""}
       <div class="noterow">
@@ -433,7 +435,9 @@ listEl.addEventListener("click", e=>{
   } else if(btn.dataset.act==="seen"){
     state.seen[band] = !state.seen[band];
     if(!state.seen[band]) delete state.seen[band];
-  }
+  } else if(btn.dataset.act==="cleartime"){
+    delete state.time[band]; delete state.stage[band];
+  } else return;
   save(); render();
 });
 listEl.addEventListener("input", e=>{
@@ -445,8 +449,14 @@ listEl.addEventListener("input", e=>{
   if(!e.target.value) delete state[store][band];
   save();
 });
+// iOS fires change (not always input) when a time is picked or cleared
 listEl.addEventListener("change", e=>{
-  if(e.target.dataset.act==="time") renderList();  // refresh overlap warnings
+  const act = e.target.dataset.act;
+  if(act!=="time" && act!=="stage") return;
+  const band = decodeURIComponent(e.target.closest(".card").dataset.band);
+  const store = act==="time" ? "time" : "stage";
+  if(e.target.value) state[store][band] = e.target.value; else delete state[store][band];
+  save(); renderList();
 });
 
 /* ---------- plan sheet ---------- */

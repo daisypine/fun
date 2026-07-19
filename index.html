@@ -123,6 +123,17 @@
   .t[data-t=want].on{background:var(--pop);color:var(--ink)}
   .t[data-t=songs].on{background:var(--songs)}
   .t[data-t=nah].on{background:var(--nah)}
+  .timerow{display:flex;gap:6px;padding:0 10px 8px 12px;align-items:center}
+  .timerow input{
+    border:2px solid var(--line);border-radius:7px;padding:7px 8px;font-family:inherit;
+    font-size:15px;color:var(--ink);background:#fff;min-width:0;
+  }
+  .timerow input[type=time]{flex:0 0 108px}
+  .timerow input.stage{flex:1}
+  .clash{
+    display:block;margin:0 10px 8px 12px;background:var(--hot);color:#fff;border-radius:6px;
+    padding:6px 8px;font-size:12px;font-weight:700;letter-spacing:.02em;
+  }
   .noterow{padding:0 10px 10px 12px}
   textarea{
     width:100%;border:2px dashed var(--line);border-radius:7px;background:#fff;
@@ -218,7 +229,7 @@ const TIERS = [
   {k:"nah",   label:"Skip",      short:"✕ Skip"}
 ];
 const KEY = "warped-lb-2026:v1";
-let state = {tier:{}, note:{}, seen:{}};
+let state = {tier:{}, note:{}, seen:{}, time:{}, stage:{}};
 let ui = {day:"sat", filter:"all", q:"", sort:"az"};
 
 /* ---------- storage ----------
@@ -279,11 +290,40 @@ function restore(file){
   const fr = new FileReader();
   fr.onload = ()=>{
     try{
-      state = Object.assign({tier:{},note:{},seen:{}}, JSON.parse(fr.result));
+      state = Object.assign({tier:{},note:{},seen:{},time:{},stage:{}}, JSON.parse(fr.result));
       save(); render(); renderPlan();
     }catch(e){ setStatus("That file didn't read as a backup"); }
   };
   fr.readAsText(file);
+}
+
+/* ---------- set times ---------- */
+function mins(band){
+  const v = state.time[band];
+  if(!v) return null;
+  const m = v.match(/^(\d{1,2}):(\d{2})$/);
+  return m ? (+m[1])*60 + (+m[2]) : null;
+}
+function pretty(band){
+  const t = mins(band); if(t===null) return "";
+  let h = Math.floor(t/60), mm = String(t%60).padStart(2,"0");
+  const ap = h>=12 ? "PM" : "AM"; h = h%12 || 12;
+  return `${h}:${mm} ${ap}`;
+}
+// Two bands you care about, starting within 30 minutes of each other, on the same day.
+function clashes(){
+  const map = {};
+  ["sat","sun"].forEach(d=>{
+    const timed = BANDS.filter(x=>x.d===d && mins(x.n)!==null &&
+      ["must","want","songs"].includes(state.tier[x.n]));
+    timed.forEach(a=>timed.forEach(b=>{
+      if(a.n===b.n) return;
+      if(Math.abs(mins(a.n)-mins(b.n)) < 30){
+        (map[a.n] = map[a.n] || []).push(b.n);
+      }
+    }));
+  });
+  return map;
 }
 
 /* ---------- render ---------- */
@@ -298,6 +338,14 @@ function visible(){
   if(ui.sort==="tier"){
     const rank = {must:0,want:1,songs:2,nah:4};
     b = [...b].sort((x,y)=>(rank[state.tier[x.n]] ?? 3)-(rank[state.tier[y.n]] ?? 3) || x.n.localeCompare(y.n));
+  } else if(ui.sort==="time"){
+    b = [...b].sort((x,y)=>{
+      const a = mins(x.n), c = mins(y.n);
+      if(a===null && c===null) return x.n.localeCompare(y.n);
+      if(a===null) return 1;
+      if(c===null) return -1;
+      return a-c || x.n.localeCompare(y.n);
+    });
   }
   return b;
 }
@@ -325,6 +373,7 @@ function renderList(){
       <div class="empty">No bands match that. Clear the search or pick a different filter.</div>`;
     return;
   }
+  const clash = clashes();
   let html = "", lastDay = null;
   b.forEach(x=>{
     if(ui.day==="all" && x.d!==lastDay){
@@ -343,6 +392,11 @@ function renderList(){
       <div class="tiers">
         ${TIERS.map(tr=>`<button class="t ${t===tr.k?"on":""}" data-t="${tr.k}" data-act="tier">${tr.label}</button>`).join("")}
       </div>
+      <div class="timerow">
+        <input type="time" data-act="time" value="${state.time[x.n]||""}" aria-label="Set time">
+        <input class="stage" type="text" data-act="stage" value="${(state.stage[x.n]||"").replace(/"/g,"&quot;")}" placeholder="Stage" aria-label="Stage">
+      </div>
+      ${clash[x.n] ? `<div class="clash">Overlaps ${[...new Set(clash[x.n])].join(", ")}</div>` : ""}
       <div class="noterow">
         <textarea data-act="note" placeholder="Songs to catch, notes, merch to grab…">${note.replace(/</g,"&lt;")}</textarea>
       </div>
@@ -364,8 +418,10 @@ chipsEl.onclick = e=>{
 };
 document.getElementById("q").oninput = e=>{ ui.q = e.target.value.trim().toLowerCase(); renderList(); };
 document.getElementById("sort").onclick = e=>{
-  ui.sort = ui.sort==="az" ? "tier" : "az";
-  e.target.textContent = ui.sort==="az" ? "A–Z" : "By tier";
+  const order = ["az","tier","time"];
+  const labels = {az:"A–Z", tier:"By tier", time:"By time"};
+  ui.sort = order[(order.indexOf(ui.sort)+1) % order.length];
+  e.target.textContent = labels[ui.sort];
   renderList();
 };
 listEl.addEventListener("click", e=>{
@@ -381,11 +437,16 @@ listEl.addEventListener("click", e=>{
   save(); render();
 });
 listEl.addEventListener("input", e=>{
-  if(e.target.dataset.act!=="note") return;
+  const act = e.target.dataset.act;
+  if(!["note","time","stage"].includes(act)) return;
   const band = decodeURIComponent(e.target.closest(".card").dataset.band);
-  state.note[band] = e.target.value;
-  if(!e.target.value) delete state.note[band];
+  const store = {note:"note", time:"time", stage:"stage"}[act];
+  state[store][band] = e.target.value;
+  if(!e.target.value) delete state[store][band];
   save();
+});
+listEl.addEventListener("change", e=>{
+  if(e.target.dataset.act==="time") renderList();  // refresh overlap warnings
 });
 
 /* ---------- plan sheet ---------- */
@@ -399,7 +460,8 @@ function planText(){
       if(!rows.length) return;
       out += `  ${t.label.toUpperCase()}\n`;
       rows.forEach(x=>{
-        out += `   - ${x.n}${state.seen[x.n]?" [saw them]":""}${state.note[x.n]?` — ${state.note[x.n]}`:""}\n`;
+        const when = pretty(x.n);
+        out += `   - ${when?when+" ":""}${x.n}${state.stage[x.n]?" @ "+state.stage[x.n]:""}${state.seen[x.n]?" [saw them]":""}${state.note[x.n]?` — ${state.note[x.n]}`:""}\n`;
       });
     });
   });
@@ -409,7 +471,20 @@ function planText(){
 }
 function renderPlan(){
   const el = document.getElementById("plan");
+  const clash = clashes();
   let html = "";
+  ["sat","sun"].forEach(d=>{
+    const timed = BANDS.filter(x=>x.d===d && mins(x.n)!==null && state.tier[x.n] && state.tier[x.n]!=="nah")
+                       .sort((a,b)=>mins(a.n)-mins(b.n));
+    if(!timed.length) return;
+    html += `<h3>Running order — ${d==="sat"?"Saturday 7/25":"Sunday 7/26"}</h3>`;
+    timed.forEach(x=>{
+      html += `<div class="planline"><b>${pretty(x.n)} · ${x.n}</b>` +
+        (state.stage[x.n]?` <i>${state.stage[x.n].replace(/</g,"&lt;")}</i>`:"") +
+        (clash[x.n]?`<i style="color:#C0301C">Overlaps ${[...new Set(clash[x.n])].join(", ")}</i>`:"") +
+        (state.note[x.n]?`<i>${state.note[x.n].replace(/</g,"&lt;")}</i>`:"") + `</div>`;
+    });
+  });
   [["sat","Saturday 7/25"],["sun","Sunday 7/26"]].forEach(([d,label])=>{
     const picked = BANDS.filter(x=>x.d===d && state.tier[x.n] && state.tier[x.n]!=="nah");
     html += `<h3>${label} — ${picked.length} picked</h3>`;
@@ -442,7 +517,7 @@ document.getElementById("restorebtn").onclick = ()=> document.getElementById("re
 document.getElementById("restorefile").onchange = e=>{ if(e.target.files[0]) restore(e.target.files[0]); };
 document.getElementById("reset").onclick = e=>{
   if(e.target.dataset.armed){
-    state = {tier:{},note:{},seen:{}}; save(); render(); renderPlan();
+    state = {tier:{},note:{},seen:{},time:{},stage:{}}; save(); render(); renderPlan();
     delete e.target.dataset.armed; e.target.textContent = "Clear all picks";
   } else {
     e.target.dataset.armed = "1"; e.target.textContent = "Tap again to erase everything";
